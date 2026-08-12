@@ -106,7 +106,7 @@ Pudu AMR removes empty bin
 | Mounting | Floor / pedestal-mounted on blue fabricated frame with casters |
 | Soft joint limits (as configured in planning project) | J1 ±180°, J2 ±180°, **J3 −5° to +355°**, J4 ±180°, J5 ±180°, J6 ±180° |
 
-> The asymmetric J3 limit (−5° to +355°) is deliberate and important — the pick poses operate around **J3 ≈ +234° to +266°**, well outside a conventional ±180° range. Do not "normalize" these limits.
+> The asymmetric J3 limit (−5° to +355°) is deliberate and important. Measured pick poses run **J3 ≈ +234° to +245°**, and the fixed enter/exit-bin waypoint sits at **J3 = +265.78°** — all well outside a conventional ±180° range. Do not "normalize" these limits.
 
 ### 3.2 3D Camera
 
@@ -130,12 +130,12 @@ Pudu AMR removes empty bin
 
 The camera sits **625.25 mm** above the robot base and the bin ROI is centred at **Z = −136 mm**, giving a working distance of approximately **761 mm** — near the far end of the NANO ULTRA-700M's 400–800 mm range.
 
-At that distance the manufacturer's field of view is roughly **740 × 525 mm** (interpolated between the published 400 × 270 mm @ 0.4 m and 770 × 550 mm @ 0.8 m).
+At that distance the manufacturer's field of view is roughly **734 × 523 mm** (linear interpolation between the published 400 × 270 mm @ 0.4 m and 770 × 550 mm @ 0.8 m).
 
 This has two consequences that are easy to miss:
 
 1. **The configured `3d_roi` (1011.9 × 672.9 mm) is larger than the camera can actually see.** The ROI is not the limiting aperture — the FOV is. Widening the ROI will not reveal more of the bin.
-2. **Part `t1` is 727 mm long against a ~740 mm FOV width.** The bar only just fits across the frame. A bar lying diagonally, or a bin positioned even slightly off-centre, can push one end of a part outside the FOV — producing a partial point cloud and a failed or low-confidence match.
+2. **Part `t1` is 727 mm long against a ~734 mm FOV width.** The bar only just fits across the frame. A bar lying diagonally, or a bin positioned even slightly off-centre, can push one end of a part outside the FOV — producing a partial point cloud and a failed or low-confidence match.
 
 This is a plausible contributing factor to the rare mis-pick described in [§15.2](#152-false-pick-pose-with-12-parts-remaining), and it is a **hard constraint on any future longer part**. Anything appreciably longer than `t1` will require either raising the camera (which pushes past the 800 mm spec limit and degrades accuracy) or a different camera variant.
 
@@ -171,7 +171,7 @@ Two isolated subnets are used, separating high-bandwidth camera traffic from rob
 |---|---|---|---|
 | Mech-Eye NANO ULTRA | 192.168.5.x | `192.168.5.10` | Camera — connects to IPC **CAMERA** port |
 | IPC (camera NIC) | 192.168.5.x | *TBD* | |
-| IPC (robot NIC) | 192.168.2.x | `192.168.2.1` (observed) | Hosts Standard Interface TCP server |
+| IPC (robot NIC) | 192.168.2.x | *TBD* | Hosts Standard Interface TCP server (binds `0.0.0.0`, so the NIC address is not recorded in the logs) |
 | Yaskawa YRC1000micro | 192.168.2.x | `192.168.2.31` | TCP **client** to the IPC |
 
 **Standard Interface listener:** `0.0.0.0:50000` (binds all interfaces).
@@ -262,7 +262,23 @@ Equivalent: **X −60.05 mm, Y +992.11 mm, Z +625.25 mm; Rx −179.479°, Ry −
 | Distortion coefficients | all zero (pre-rectified by camera) |
 | Modified | 2026-07-17T14:34:58 |
 
-### 6.4 Caveats and Re-calibration Guidance
+### 6.4 ⚠ TCP Mismatch During Calibration
+
+`calibSetting.json` records the touch-up TCP as:
+
+```
+tcp_touch_data.tcp = [0, 0, 0.128]
+```
+
+That is a **128 mm** TCP. The production tool in `tool_config.json` is **166 mm with Rz = −65°**.
+
+This means the three calibration points were touched using a different (and orientation-free) tool definition than the one used to pick. That is not automatically wrong — it is common and correct practice to calibrate with a dedicated sharp-tipped touch probe rather than the production gripper, and a probe would legitimately have its own length and no rotation.
+
+**But it must be confirmed.** If a 128 mm probe was genuinely fitted and taught, the calibration is valid. If the value is a leftover from an earlier tool and the touches were actually made with the 166 mm EOAT, then **every calibration point carries a 38 mm Z error**, and the resulting camera-to-base transform is wrong by that amount — which would show up as a consistent pick-height offset.
+
+**Action:** confirm with whoever performed the 2026-07-17 calibration which physical tool was on the flange, and record it in §20. If it cannot be confirmed, re-calibrate.
+
+### 6.5 Caveats and Re-calibration Guidance
 
 - **A printed paper board is dimensionally sensitive.** Printer scaling, humidity, and tape wrinkles all introduce error. Verify with a caliper across a known number of grid pitches (e.g. 10 spaces should measure exactly 200.0 mm) before trusting any re-calibration.
 - **Three points is the minimum.** The manual 3-point method solves the plane but gives no redundancy and no residual error metric. If pick accuracy degrades, re-calibrate with more points or move to the standard automatic multi-pose calibration.
@@ -390,7 +406,7 @@ Flip Poses' Axes_1 ──► Transform Poses_1 ──┬─► Path Planning_1 [
 Path Planning_1 ──► Output_1
 ```
 
-**Control flow:** one control edge — `Trigger Control By Flag_1` gates `Transform Poses_1`.
+**Control flow:** one control edge — `Trigger Control By Flag_1` gates **`Flip Poses' Axes_1`**. If the final angle validation fails, the flip/transform/plan chain does not execute and no pose is produced.
 
 ### 9.2 Step-by-Step Reference
 
@@ -398,7 +414,7 @@ Path Planning_1 ──► Output_1
 |---|---|---|---|
 | 1 | `Capture Images from Camera_1` | Capture Images from Camera | Camera `RUM70249B500E015` (NANO ULTRA) @ `192.168.5.10`; param group `drill-tap-cell`; calib group `RUM70249B500E015-EyeToHand-2026-07-17`; `dataTypes=7` (2D + depth + cloud); timeout 10 000 ms; **reconnect attempts 3**; recapture attempts 3; virtual mode off |
 | 2 | `3D Target Object Recognition_1` | 3D Target Object Recognition | Target object **`t1`**; procedure `resource/workpiece_recog_v2/{7d8c1e28-…}/t1.json`; debug off |
-| 3 | `Validate Poses by Included Angles to Reference Direction_1` | Validate Poses by Included Angle | Axis type 2, **goal axis 4**, threshold **90°**, reference direction (0,0,1), `filterOutAllPoses` off |
+| 3 | `Validate Poses by Included Angles to Reference Direction_1` | Validate Poses by Included Angle to Reference Direction | Axis type 2, **goal axis 4**, threshold **90°**, reference direction (0,0,1), `filterOutAllPoses` off |
 | 4 | `Easy Create Poses_1` | Easy Create Poses | `[0,0,0, 0,1,0,0]` — reference pose (180° about X) |
 | 5 | `Filter_1` | Filter | Gates pick-point IDs by step 3's boolean list |
 | 6 | `Filter_4` | Filter | Gates confidences by step 3's boolean list |
@@ -412,9 +428,9 @@ Path Planning_1 ──► Output_1
 | 14 | `Trim Input List_1` | Trim Input List | **numberLimit = 1** — keep best pose only |
 | 15 | `Trim Input List_2` | Trim Input List | **numberLimit = 1** — keep matching ID only |
 | 16 | `Easy Create Poses_2` | Easy Create Poses | `[0,0,0, 1,0,0,0]` — identity reference |
-| 17 | `Validate Poses by Included Angles to Reference Direction_2` | Validate Poses by Included Angle | Same settings as step 3 — final sanity gate on the chosen pose |
+| 17 | `Validate Poses by Included Angles to Reference Direction_2` | Validate Poses by Included Angle to Reference Direction | Same settings as step 3 — final sanity gate on the chosen pose |
 | 18 | `Flip Poses' Axes_1` | Flip Poses' Axes | axisType 0, directionType 1, rotate about axis 2 (Z) |
-| 19 | `Trigger Control By Flag_1` | Trigger Control By Flag | triggerType 1 — blocks downstream if the final validation fails |
+| 19 | `Trigger Control By Flag_1` | Trigger Control By Flag | triggerType 1 — gates `Flip Poses' Axes_1`; blocks the whole downstream chain if the final validation fails |
 | 20 | `Transform Poses_1` | Transform Poses | transformType 0 |
 | 21 | `Path Planning_1` | Path Planning | Scenario 0; cloud in camera coords; `methodToConvertData` 1; target-object cloud search radius 3 mm; auto drift correction **off** |
 | 22 | `Show Point Clouds and Poses_1` | Show Point Clouds and Poses | Debug visualisation; bounds −3 mm … 0; normals hidden |
@@ -500,16 +516,20 @@ Project: `MechMaster/planning_project/planning_project.json` · Robot model: `ya
 
 ### 10.1 Task Sequence
 
+Execution order below is traced from `mission.entry` through `mission.transitions` — **not** the order in which the tasks happen to be stored in the JSON file. All transitions are on out-port 0 (a single linear chain).
+
 | Order | Task | Type | Description | Key settings |
 |---|---|---|---|---|
 | 1 | `Branch by Msg_1` | branch_by_msg | Entry branch | size 1, wait timeout 30 s |
-| 2 | `Change Tool_1` | tcp | Set robot tool | EE GUID `{608ecf20-…}` |
-| 3 | `Fixed-Point Move_2` | move | **Enter-bin point** | Joint target below; vel 1, acc 0.5, blend radius 0.05 |
-| 4 | `Visual Recognition_1` | visual_look | Trigger vision | `vision_name = Drill_Tap_Path Planning_1`; eye-in-hand false |
-| 5 | `Vision Move_1` | visual_move | **Pick move to vision pose** | maxPlanResultsCount 2; `planFailureOutPort` **true**; 5 interpolation segments; position deviation ≤ 50 mm; angle deviation ≤ 5° (0.0873 rad) |
-| 6 | `Relative Move_1` | relative_move | **Approach point** | relative_to 3, avoidance radius 5 mm, blend radius 0.05 |
+| 2 | `Visual Recognition_1` | visual_look | **Trigger vision** | `vision_name = Drill_Tap_Path Planning_1`; eye-in-hand false |
+| 3 | `Change Tool_1` | tcp | Set robot tool | EE GUID `{608ecf20-…}` |
+| 4 | `Fixed-Point Move_2` | move | **Enter-bin point** | Joint target below; vel 1, acc 0.5, blend radius 0.05, avoidance radius 5 mm |
+| 5 | `Relative Move_1` | relative_move | **Approach point** | relative_to 3, avoidance radius 100 mm, blend radius 0.05 |
+| 6 | `Vision Move_1` | visual_move | **Pick move to vision pose** | maxPlanResultsCount 2; `planFailureOutPort` **true**; 5 interpolation segments; position deviation ≤ 50 mm; angle deviation ≤ 5° (0.0873 rad) |
 | 7 | `Relative Move_2` | relative_move | **Retreat point** | relative_to 2, avoidance radius 100 mm, blend radius 0.05 |
-| 8 | `Fixed-Point Move_1` | move | **Exit-bin point** | Same joint target as enter-bin |
+| 8 | `Fixed-Point Move_1` | move | **Exit-bin point** | Same joint target as enter-bin; avoidance radius 5 mm |
+
+> **Vision runs before the robot moves.** `Visual Recognition_1` is the second task in the chain — the camera captures and the pose is planned while the robot is still outside the bin. The robot then moves to the enter-bin waypoint, approaches, picks, retreats and exits. This ordering is why the camera never sees the arm and why an eye-to-hand mount works without a "move clear of the camera" step.
 
 **Enter-bin / Exit-bin joint target** (identical for both):
 
@@ -596,11 +616,13 @@ IPC  → Robot:  101,1102\r
 |---|---|
 | `101` | Start Mech-Vision project |
 | `1` | Vision project number (`Drill_Tap`) |
-| `0` | Robot pose type |
-| `2` | Expected number of vision points |
+| `0` | **Expected pose count** — `NEED_ALL_POSES`, i.e. return every pose the project produces |
+| `2` | **Robot pose type** — `VIS_CURRENT_FL`, i.e. the current flange pose follows |
 | `450.628, 720.155, 140.928` | Flange position X, Y, Z (mm) |
 | `-179.762, -0.127, 24.422` | Flange orientation Rx, Ry, Rz (deg) |
 | `1102` | Status: project triggered successfully |
+
+Field order verified against `communication/src/interface/interfaces.py` (`run_vision`, unpacked as `project_num, pose_count_required, run_cmd`) and the constants in `commands.py` (`NO_POINT=0`, `VIS_CURRENT_POINT=1`, `VIS_CURRENT_FL=2`, `VIS_PREDEFINED_JPS=3`, `NEED_ALL_POSES=0`). Note this ordering is easy to get backwards — the count comes **before** the pose type.
 
 **Step 2 — Robot retrieves the plan (command 105):**
 
@@ -615,9 +637,11 @@ IPC  → Robot:  105,1103,1,1,1,-89.834,-58.0994,239.947,-1.0087,62.3244,112.282
 | `1` | Project number |
 | `1` | Data type — **1 = joint positions** |
 | `1103` | Status: vision result sent |
-| `1,1,1` | Pose count, index, label count |
+| `1,1,1` | **Send-complete flag, pose count, visual-move position** |
 | `-89.834 … 112.2825` | **J1–J6 in degrees** |
-| `0,0` | Label / trailing fields |
+| `0,0` | **Label, tool index** |
+
+Field order verified against `send_poses()` in `communication/src/interface/interfaces.py` — the header is packed as `(send_complete, pose_count, visual_move_position)` with format `3i`, followed by each pose as `{n}f2i` (pose floats, then label and tool index).
 
 ### 11.3 Sample Pick Poses
 
@@ -670,7 +694,7 @@ This section records **why** the cell is built the way it is. These are the deta
 
 **Reason:** Calibrating in the exact plane the parts occupy, at zero cost, without fixturing a rigid board inside a bin the AMR carries away.
 
-**Trade-off:** No residual error metric, and paper is dimensionally sensitive. See [§6.4](#64-caveats-and-re-calibration-guidance).
+**Trade-off:** No residual error metric, and paper is dimensionally sensitive. See [§6.5](#65-caveats-and-re-calibration-guidance).
 
 ### 12.3 Centre-Line Pick Constraint
 
@@ -733,28 +757,33 @@ The robot cycles autonomously: trigger vision → receive joint plan → enter b
 
 ### 14.1 Vision Execution Time
 
-From `logs/vision_log/logs/2026-07-30.log` — **367 measured executions**:
+From `logs/vision_log/logs/2026-07-30.log` — **183 measured executions**:
 
 | Metric | Value |
 |---|---|
-| Mean | **1.826 s** |
+| Mean | **1.825 s** |
 | Minimum | 0.630 s |
 | Maximum | 2.571 s |
-| Typical steady-state | 1.89 – 1.94 s |
+| Median | 1.909 s |
+| Interquartile range | 1.362 – 2.290 s |
 
 Independently confirmed on 2026-08-12: **1.50045 s** for a 37-step-execution run.
 
 ### 14.2 End-to-End Vision Response
 
-Time from robot command `101` to receipt of the `105` reply, measured over 20 cycles: **minimum 2.73 s**, typical ~3 s. The delta over raw vision time is path planning plus interface round-trip.
+Time from robot command `101` to receipt of the `105` reply, measured over 20 cycles: **2.73 – 2.77 s for 19 of 20 cycles** (one 97 s outlier during teaching). The delta over raw vision time is path planning plus interface round-trip.
 
 ### 14.3 Reliability
 
 | Metric | Value |
 |---|---|
-| Vision completions logged (2026-07-30) | 182 |
-| Error codes other than `CV-E0000` (success) | **0** |
-| Planning exit codes | `MP-E0000` (success) |
+| Vision executions logged (2026-07-30) | 183 |
+| Successful (`CV-E0000`) | 182 |
+| Failed (`CV-EXXXX`) | **1** — see below |
+| Success rate | 99.5 % |
+| Planning exit codes (normal runs) | `MP-E0000` (success) |
+
+The single failure, at 2026-07-30T17:52:12 (job 106), was `Path Planning_1: Failed to run the Step` → `Failed to call function "run" of service "executor_planning_project"` → `Error message: Stream removed`. This is a **loss of the gRPC connection between Mech-Vision and the planning executor**, not a vision or a robot fault. It is covered in [§15.6](#156-path-planning-service-disconnect-cv-exxxx).
 
 ### 14.4 Not Yet Measured
 
@@ -798,7 +827,7 @@ Time from robot command `101` to receipt of the `105` reply, measured over 20 cy
 **Likely mechanism:** With a nearly empty bin, a lone bar can sit at an angle against the bin floor or wall, presenting a partial surface to the camera. Two factors compound this:
 
 - With a `confidenceThreshold` of 0.3 and a `Center_line` band only 80 mm wide, a marginal match can pass validation.
-- The 727 mm bar spans almost the full camera field of view (~740 mm at the working distance — see [§3.2.1](#321--field-of-view-is-the-binding-constraint)). A bar lying diagonally can put one end outside the frame, so the match is made against a **truncated point cloud**. A partial cloud of a long, near-symmetric part is exactly the condition under which PPF matching slips along the part's length.
+- The 727 mm bar spans almost the full camera field of view (~734 mm at the working distance — see [§3.2.1](#321--field-of-view-is-the-binding-constraint)). A bar lying diagonally can put one end outside the frame, so the match is made against a **truncated point cloud**. A partial cloud of a long, near-symmetric part is exactly the condition under which PPF matching slips along the part's length.
 
 The three-magnet EOAT then grips at a slightly wrong point, and the offset carries through to placement.
 
@@ -845,6 +874,30 @@ The second factor also explains why the fault is specific to a nearly empty bin:
 The planning history retains every planning attempt with a timestamp — invaluable for reconstructing an intermittent fault after the fact.
 
 ---
+
+### 15.6 Path Planning Service Disconnect (`CV-EXXXX`)
+
+**Symptom:** A vision run aborts with:
+
+```
+[E] Path Planning_1: Failed to run the Step
+    Failed to call function "run" of service "executor_planning_project"
+    Error message: Stream removed
+```
+
+Exit code 3, error code `CV-EXXXX`.
+
+**Observed:** Once in 183 executions on 2026-07-30 (job 106, 17:52:12).
+
+**Meaning:** The gRPC stream between Mech-Vision and the planning executor process dropped. This is an **inter-process fault on the IPC**, not a camera, robot, or network fault — the robot and camera were both healthy at the time.
+
+**Response:**
+
+1. Re-trigger the cycle. The fault is transient and did not recur in the session.
+2. If it recurs, restart the Mech-Vision solution (which restarts the planning executor).
+3. If it recurs frequently, check IPC CPU and memory headroom during a cycle, and review the Windows Event Log for the executor process. A planning executor that is being starved or killed will present exactly this way.
+
+> This is worth watching. A single occurrence is not a defect, but the failure mode is silent from the robot's perspective — the robot simply gets no plan. If it becomes frequent, the robot job should have an explicit timeout/retry rather than relying on the 10 s vision timeout alone.
 
 ## 16. Maintenance
 
@@ -900,22 +953,23 @@ Re-teach and re-verify both after any calibration change.
 **To productionise `t2`:**
 
 1. Decide between a single recognition step with a switchable target object, or parallel recognition branches with a part-select input from the robot or PLC.
-2. Re-verify the `Center_line` ROI — `t2` is 16 mm wider, so centre-line clearance differs.
+2. Re-verify the `Center_line` ROI — `t2` is 15.6 mm wider (87.01 mm vs 71.40 mm), so centre-line clearance differs.
 3. Confirm the CNC fixture and program for `t2`.
 4. **Test for cross-matching**: `t1` and `t2` are the same thickness and similar length. Verify a `t1`-configured matching run does not false-positive on a `t2`, and vice versa.
 
 Smaller AMTE 400 components are planned beyond `t2`. Note that the current `3d_roi` is only 113 mm tall and the `Center_line` band 80 mm wide — both were sized for a 727 mm bar and will need revisiting for materially different geometry.
 
-**Smaller parts are the easy direction; longer parts are not.** Anything appreciably longer than `t1` will not fit the camera's ~740 × 525 mm field of view at the current mounting height ([§3.2.1](#321--field-of-view-is-the-binding-constraint)), and raising the camera pushes past the NANO ULTRA-700M's 800 mm working-distance limit. Plan part families accordingly.
+**Smaller parts are the easy direction; longer parts are not.** Anything appreciably longer than `t1` will not fit the camera's ~734 × 523 mm field of view at the current mounting height ([§3.2.1](#321--field-of-view-is-the-binding-constraint)), and raising the camera pushes past the NANO ULTRA-700M's 800 mm working-distance limit. Plan part families accordingly.
 
 ### 17.3 Recommended Improvements
 
 | Priority | Improvement | Rationale |
 |---|---|---|
 | High | Add an EOAT collision model and enable point-cloud collision checking | Currently the cell has no collision protection beyond waypoint design ([§5.2](#52--open-risk--no-tool-collision-model)) |
+| High | Resolve the calibration TCP question | A 38 mm systematic pick-height error is possible if unconfirmed ([§6.4](#64--tcp-mismatch-during-calibration)) |
 | High | Instrument full cycle time and parts-per-hour | No throughput baseline exists ([§14.4](#144-not-yet-measured)) |
 | Medium | Raise `velScale` above 0.2 | Likely the largest single cycle-time gain — but only after collision checking is restored ([§10.2](#102-executor-settings)) |
-| Medium | Re-calibrate with a rigid board and record a residual error figure | Current 3-point paper calibration has no error metric ([§6.4](#64-caveats-and-re-calibration-guidance)) |
+| Medium | Re-calibrate with a rigid board and record a residual error figure | Current 3-point paper calibration has no error metric ([§6.5](#65-caveats-and-re-calibration-guidance)) |
 | Medium | Part-present sensing at the CNC fixture | Catches the rare mis-placement before the drill cycle ([§15.2](#152-false-pick-pose-with-12-parts-remaining)) |
 | Low | Automated log rotation/archival | `logs/` grows without bound |
 
@@ -983,6 +1037,7 @@ Items not yet captured. Fill these in and re-issue.
 | # | Item | Section |
 |---|---|---|
 | 0 | **Confirm the camera variant** — NANO ULTRA-**350M** or **700M**. The 761 mm working distance in use is only valid for the 700M (400–800 mm); if a 350M is fitted it is operating well outside its 250–500 mm range, which would explain accuracy problems. Check the label on the camera body. | §3.2 |
+| 0b | **Which tool was on the flange during the 2026-07-17 calibration?** `calibSetting.json` records a 128 mm TCP while production uses 166 mm. If a touch probe was used, record its part number; if not, the calibration carries a 38 mm Z error and must be redone. | §6.4 |
 | 1 | IPC IP addresses on each NIC; which physical port serves camera vs. robot | §4 |
 | 2 | Robot job/program name on the YRC1000micro; MM job-set version | §11.4 |
 | 3 | EOAT magnet voltage, current, and robot DO mapping | §5 |
@@ -992,7 +1047,7 @@ Items not yet captured. Fill these in and re-issue.
 | 7 | AMTE 400 part number / drawing reference for `t1` and `t2` | §8 |
 | 8 | Parts per bin; bin dimensions | §14.4 |
 | 9 | Full cell cycle time and parts per hour | §14.4 |
-| 10 | Pudu AMR model and bin drop-off repeatability spec | §3.4, §6.4 |
+| 10 | Pudu AMR model and bin drop-off repeatability spec | §3.4, §6.5 |
 | 11 | Mech-Eye SDK version and camera firmware version | §2.2 |
 | 12 | Commissioning date; others who worked on the cell | §20 |
 | 13 | Safety assessment / risk assessment reference for cobot operation | — |
@@ -1012,7 +1067,7 @@ Items not yet captured. Fill these in and re-issue.
 This document was compiled from:
 
 - **Solution backup:** `MechMaster_drill_Tap_Backup_7_30_2026.zip` — solution timestamp 2026-07-30 18:49:49
-- **Runtime logs:** vision (367 executions), communication (44 interface messages / 22 cycles), and planning history for 2026-07-29 and 2026-07-30
+- **Runtime logs:** vision (183 executions on 2026-07-30), communication (44 messages received / 44 sent = 20 complete pick cycles), and planning history for 2026-07-30 (224 records)
 - **Site photographs:** cell overview, pick bins with parts, IPC port panel, camera internals
 - **Mech-Vision screenshots:** 2026-08-12, showing the 23-step project graph and a 1.50 s execution
 - **Mech-Eye Industrial 3D Camera User Manual** v2.5.4
@@ -1026,4 +1081,7 @@ This document was compiled from:
 - Camera pose and ROI dimensions are converted from the stored quaternion/half-length representations.
 - Joint values are converted from stored radians to degrees.
 - **Caveat:** `Drill_Tap.json.bak` (2026-07-28) was used for step parameters because `Drill_Tap.vis` (2026-07-30) is binary. The step count and topology match the 2026-08-12 screenshots exactly (23 steps), so the structure is current; however, **any parameter changed between 2026-07-28 and 2026-07-30 would not be reflected here.** Verify parameters in the live project before relying on them for a change.
+- The planning task **execution order** in §10.1 was traced through `mission.transitions` from `mission.entry`, not read from the order tasks appear in the JSON file — the two differ.
+- Protocol field meanings in §11.2 were decoded from the Communication Component source (`interfaces.py`, `commands.py`), not inferred from the message layout.
+- **This document was fact-checked** against the solution backup after drafting. 17 discrepancies were found and corrected, including the planning task order, the control-flow edge target, the protocol field decoding, and the execution-count statistics. Figures now stated have been recomputed from source.
 - Items marked *TBD* were not derivable from any source and were deliberately left blank rather than estimated.
